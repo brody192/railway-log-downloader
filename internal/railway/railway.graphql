@@ -1,0 +1,34 @@
+query EnvironmentLogs($afterLimit: Int, $anchorDate: String, $beforeDate: String, $beforeLimit: Int, $environmentId: String!, $filter: String) {
+  environmentLogs(
+    afterLimit: $afterLimit
+    beforeDate: $beforeDate
+    anchorDate: $anchorDate
+    beforeLimit: $beforeLimit
+    environmentId: $environmentId
+    filter: $filter
+  ) {
+    attributes {
+      key
+      value
+    }
+    message
+    severity
+    tags {
+      deploymentId
+      deploymentInstanceId
+      environmentId
+      pluginId
+      projectId
+      serviceId
+      snapshotId
+    }
+    timestamp
+  }
+}
+
+query Deployment($id: String!) {
+  deployment(id: $id) {
+    environmentId
+    projectId
+  }
+}
