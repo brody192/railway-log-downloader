@@ -8,15 +8,27 @@ import (
 )
 
 func GetAllDeploymentLogsBlocking(ctx context.Context, railwayClient *RailwayClient, logs *[]*EnvironmentLogsEnvironmentLogsLog, options GetLogsOptions) error {
-	if options.DeploymentId == "" {
-		return ErrDeploymentIdRequired
+	flagName, value := config.Railway.GetRequiredGroupValue("service_or_deployment")
+
+	if value == "" {
+		return ErrFilterIDRequired
 	}
 
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
 
-	deployment, err := Deployment(ctx, railwayClient, options.DeploymentId)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrFailedToGetDeployment, err)
+	if !options.ResumeFromTimestamp.IsZero() {
+		timestamp = options.ResumeFromTimestamp.UTC().Format(time.RFC3339Nano)
+	}
+
+	environmentId := config.Railway.EnvironmentID
+
+	if environmentId == "" {
+		deployment, err := Deployment(ctx, railwayClient, options.DeploymentId)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrFailedToGetDeployment, err)
+		}
+
+		environmentId = deployment.Deployment.EnvironmentId
 	}
 
 	if options.ProgressChannel != nil {
@@ -33,15 +45,17 @@ func GetAllDeploymentLogsBlocking(ctx context.Context, railwayClient *RailwayCli
 		default:
 		}
 
+		filter := buildFilter(flagName, value, config.Railway.Filter)
+
 		logsResponse, err := EnvironmentLogs(ctx, railwayClient,
 			0,         // after limit
 			timestamp, // anchor date
 			time.Unix(0, 0).UTC().Format(time.RFC3339Nano), // before limit (Unix epoch)
 			// 5000 is the maximum number of logs that the API will allow us to fetch
-			// Why 4999? Becuase the API will return 5001 logs even if we set the limit to 5000, so this is compensating for that to get the even count up in the progress indicator
+			// Why 4999? Because the API will return 5001 logs even if we set the limit to 5000, so this is compensating for that to get the even count up in the progress indicator
 			4999,
-			deployment.Deployment.EnvironmentId, // environment id
-			buildFilter(config.Railway.DeploymentID, config.Railway.Filter), // deployment id
+			environmentId, // environment id
+			filter,        // filter
 		)
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrFailedToGetLogs, err)
@@ -83,8 +97,8 @@ func GetAllDeploymentLogsAsync(ctx context.Context, railwayClient *RailwayClient
 	}()
 }
 
-func buildFilter(deploymentId string, filter string) string {
-	filterString := "@deployment:" + deploymentId
+func buildFilter(attribute string, value string, filter string) string {
+	filterString := fmt.Sprintf("@%s:%s", attribute, value)
 
 	if filter != "" {
 		filterString = fmt.Sprintf("%s %s", filterString, filter)

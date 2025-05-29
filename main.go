@@ -21,12 +21,16 @@ func main() {
 	// Create the railway client
 	railwayClient := railway.NewAuthedClient(config.Railway.AccountToken)
 
+	flagName, value := config.Railway.GetRequiredGroupValue("service_or_deployment")
+
 	// Create the log file name
-	logFileName := fmt.Sprintf("deployment-%s.jsonl", config.Railway.DeploymentID)
+	logFileName := fmt.Sprintf("%s-%s.jsonl", flagName, value)
 
 	// Check if the log file already exists to avoid overwriting
-	if _, err := os.Stat(logFileName); err == nil && !tools.MustParseBool(config.Railway.OverwriteFile) {
+	if _, err := os.Stat(logFileName); err == nil && !tools.MustParseBool(config.Railway.OverwriteFile) && !tools.MustParseBool(config.Railway.Resume) {
 		fmt.Printf("Log file %s already exists, delete or remove it to continue\n", logFileName)
+		fmt.Println("If you want to resume downloading logs from the oldest downloaded log, use the --resume flag")
+		fmt.Println("If you want to overwrite the existing log file, use the --overwrite flag")
 		os.Exit(1)
 	}
 
@@ -44,6 +48,22 @@ func main() {
 
 	// Create the log lines slice to store the logs
 	logLines := []*railway.EnvironmentLogsEnvironmentLogsLog{}
+
+	// Create the resume from timestamp
+	resumeFromTimestamp := time.Time{}
+
+	// If the resume flag is set, read the last downloaded log timestamp
+	if tools.MustParseBool(config.Railway.Resume) {
+		lastDownloadedLogTimestamp, err := tools.ReadFirstLineTimestamp(logFileName)
+		if err != nil {
+			fmt.Printf("Error: %s\n", err)
+			os.Exit(1)
+		}
+
+		resumeFromTimestamp = lastDownloadedLogTimestamp
+
+		fmt.Printf("Resuming from %s\n", resumeFromTimestamp.UTC().Format("January 2, 2006 15:04:05 MST"))
+	}
 
 	// Create the spinner
 	logDownloadSpinner := spinner.New(spinner.CharSets[11], (100 * time.Millisecond))
@@ -63,10 +83,11 @@ func main() {
 
 	// Start the log collection goroutine
 	railway.GetAllDeploymentLogsAsync(ctx, railwayClient, &logLines, railway.GetLogsOptions{
-		DeploymentId:    config.Railway.DeploymentID,
-		ProgressChannel: progressChannel,
-		ErrorChannel:    errorChannel,
-		DoneChannel:     doneChannel,
+		ResumeFromTimestamp: resumeFromTimestamp,
+		DeploymentId:        config.Railway.DeploymentID,
+		ProgressChannel:     progressChannel,
+		ErrorChannel:        errorChannel,
+		DoneChannel:         doneChannel,
 	})
 
 	// Print the start message

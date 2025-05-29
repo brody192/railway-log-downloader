@@ -8,6 +8,8 @@ type ProgressInfo struct {
 }
 
 type GetLogsOptions struct {
+	ResumeFromTimestamp time.Time
+
 	DeploymentId string
 
 	ProgressChannel chan ProgressInfo

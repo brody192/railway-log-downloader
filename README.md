@@ -23,12 +23,15 @@ In any case, all the logs that have been downloaded will be saved to a file call
 
 The application can be configured using command-line flags or environment variables:
 
-| Option         | Flag           | Environment Variable     | Description                              | Required | Validation           |
-|----------------|----------------|--------------------------|------------------------------------------|----------|----------------------|
-| Deployment ID  | `--deployment` | `RAILWAY_DEPLOYMENT_ID`  | The deployment ID to download logs for   | Yes      | Must be a valid UUID |
-| Filter         | `--filter`     | `RAILWAY_LOG_FILTER`     | Filter to apply to logs                  | No       | -                    |
-| Overwrite File | `--overwrite`  | `RAILWAY_OVERWRITE_FILE` | Overwrite existing logs file             | No       | Any boolean value    |
-| Account Token  | -              | `RAILWAY_ACCOUNT_TOKEN`  | Railway account token for authentication | Yes      | Must be a valid UUID |
+| Option         | Flag           | Environment Variable     | Description                                            | Required | Validation           |
+|----------------|----------------|--------------------------|--------------------------------------------------------|----------|----------------------|
+| Deployment ID  | `--deployment` | `RAILWAY_DEPLOYMENT_ID`  | The deployment ID to download logs for                 | Yes      | Must be a valid UUID |
+| Service ID     | `--service`    | `RAILWAY_SERVICE_ID`     | The service ID to download logs for                    | Yes      | Must be a valid UUID |
+| Environment ID | `--environment`| `RAILWAY_ENVIRONMENT_ID` | The environment ID to download logs for                | Yes      | Must be a valid UUID |
+| Filter         | `--filter`     | `RAILWAY_LOG_FILTER`     | Filter to apply to logs                                | No       | -                    |
+| Overwrite File | `--overwrite`  | `RAILWAY_OVERWRITE_FILE` | Overwrite existing logs file                           | No       | Any boolean value    |
+| Resume         | `--resume`     | `RAILWAY_RESUME`         | Resume downloading logs from the oldest downloaded log | No       | Any boolean value    |
+| Account Token  | -              | `RAILWAY_ACCOUNT_TOKEN`  | Railway account token for authentication               | Yes      | Must be a valid UUID |
 
 **Examples:**
 

@@ -76,9 +76,13 @@ func ParseConfig(cfg any) []error {
 		}
 
 		// collect errors only if field is required and no value is set and no default exists
-		isRequired, _ := strconv.ParseBool(field.Tag.Get("required"))
+		requiredTag := field.Tag.Get("required")
+		requiredOneOfTag := field.Tag.Get("required_one_of")
+		requiredAllTag := field.Tag.Get("required_all")
+		isRequired, _ := strconv.ParseBool(requiredTag)
 
-		if fieldValue.String() == "" && isRequired {
+		// Skip individual required validation if this field belongs to a required_one_of group
+		if requiredOneOfTag == "" && requiredAllTag == "" && fieldValue.String() == "" && isRequired {
 			flagName := field.Tag.Get("flag")
 			envVars := strings.Split(field.Tag.Get("env"), ",")
 
@@ -87,6 +91,105 @@ func ParseConfig(cfg any) []error {
 			} else {
 				errors = append(errors, fmt.Errorf("%s is required, set: %s in the environment", field.Name, english.WordSeries(envVars, "or")))
 			}
+		}
+	}
+
+	// Validate required groups
+	groups := make(map[string][]fieldInfo)
+	requiredAllGroups := make(map[string][]fieldInfo)
+
+	for i := range t.NumField() {
+		field := t.Field(i)
+		fieldValue := v.Field(i)
+		requiredOneOfTag := field.Tag.Get("required_one_of")
+		requiredAllTag := field.Tag.Get("required_all")
+
+		if requiredOneOfTag != "" {
+			groupName := requiredOneOfTag
+			groups[groupName] = append(groups[groupName], fieldInfo{
+				Name:     field.Name,
+				HasValue: fieldValue.String() != "",
+				FlagName: field.Tag.Get("flag"),
+				EnvVars:  strings.Split(field.Tag.Get("env"), ","),
+			})
+		}
+
+		if requiredAllTag != "" {
+			groupName := requiredAllTag
+			requiredAllGroups[groupName] = append(requiredAllGroups[groupName], fieldInfo{
+				Name:     field.Name,
+				HasValue: fieldValue.String() != "",
+				FlagName: field.Tag.Get("flag"),
+				EnvVars:  strings.Split(field.Tag.Get("env"), ","),
+			})
+		}
+	}
+
+	// Validate each required group
+	for _, fields := range groups {
+		fieldsWithValues := 0
+		var fieldNames []string
+
+		for _, field := range fields {
+			fieldNames = append(fieldNames, field.Name)
+
+			if field.HasValue {
+				fieldsWithValues++
+			}
+		}
+
+		if fieldsWithValues == 0 {
+			// No fields in the group have values
+			var options []string
+			for _, field := range fields {
+				if field.FlagName != "" {
+					options = append(options, fmt.Sprintf("--%s flag", field.FlagName))
+				}
+				for _, env := range field.EnvVars {
+					if env != "" {
+						options = append(options, fmt.Sprintf("%s environment variable", env))
+					}
+				}
+			}
+			errors = append(errors, fmt.Errorf("Exactly one of %s is required, provide one of: %s", english.WordSeries(fieldNames, "or"), english.WordSeries(options, "or")))
+		} else if fieldsWithValues > 1 {
+			// Multiple fields in the group have values
+			errors = append(errors, fmt.Errorf("Only one of %s can be provided, but multiple were set", english.WordSeries(fieldNames, "or")))
+		}
+	}
+
+	// Validate required_all groups
+	for _, fields := range requiredAllGroups {
+		fieldsWithValues := 0
+		var fieldNames []string
+		var fieldsWithoutValues []string
+
+		for _, field := range fields {
+			fieldNames = append(fieldNames, field.Name)
+
+			if field.HasValue {
+				fieldsWithValues++
+			} else {
+				fieldsWithoutValues = append(fieldsWithoutValues, field.Name)
+			}
+		}
+
+		// If some fields have values but not all, it's an error
+		if fieldsWithValues > 0 && fieldsWithValues < len(fields) {
+			var missingOptions []string
+			for _, field := range fields {
+				if !field.HasValue {
+					if field.FlagName != "" {
+						missingOptions = append(missingOptions, fmt.Sprintf("--%s flag", field.FlagName))
+					}
+					for _, env := range field.EnvVars {
+						if env != "" {
+							missingOptions = append(missingOptions, fmt.Sprintf("%s environment variable", env))
+						}
+					}
+				}
+			}
+			errors = append(errors, fmt.Errorf("When any of %s is provided, all other mutually exclusive options must be provided. Missing: %s", english.WordSeries(fieldNames, "or"), english.WordSeries(missingOptions, "or")))
 		}
 	}
 
@@ -103,6 +206,11 @@ func ParseConfig(cfg any) []error {
 					errors = append(errors, fmt.Errorf("%s: %s is not a valid %s", field.Name, fieldValueStr, validate))
 					continue
 				}
+			case "boolean":
+				if _, err := strconv.ParseBool(fieldValueStr); err != nil {
+					errors = append(errors, fmt.Errorf("%s: %s is not a valid boolean", field.Name, fieldValueStr))
+					continue
+				}
 			default:
 				errors = append(errors, fmt.Errorf("%s: validate for type %s not implemented", field.Name, validate))
 				continue
@@ -115,4 +223,30 @@ func ParseConfig(cfg any) []error {
 	}
 
 	return nil
+}
+
+// GetRequiredGroupValue returns the value, and flag name for the field that is set in the specified required group
+func GetRequiredGroupValue(cfg any, groupName string) (flagName, value string) {
+	v := reflect.ValueOf(cfg).Elem()
+	t := v.Type()
+
+	for i := range t.NumField() {
+		field := t.Field(i)
+		fieldValue := v.Field(i)
+		requiredOneOfTag := field.Tag.Get("required_one_of")
+
+		if requiredOneOfTag == groupName && fieldValue.String() != "" {
+			return field.Tag.Get("flag"), fieldValue.String()
+		}
+	}
+
+	return "", ""
+}
+
+// fieldInfo holds information about a field for group validation
+type fieldInfo struct {
+	Name     string
+	HasValue bool
+	FlagName string
+	EnvVars  []string
 }
