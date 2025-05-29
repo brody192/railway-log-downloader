@@ -123,7 +123,7 @@ func main() {
 	flushLogsSpinner.Reverse()
 
 	// Start the flush logs spinner if there are more than 50,000 logs
-	// Why? Becuase any log line amount over 50,000 will create a noticable delay in the flushing process
+	// Why? Because any log line amount over 50,000 will create a noticeable delay in the flushing process
 	if len(logLines) >= 50_000 {
 		flushLogsSpinner.Start()
 	}
