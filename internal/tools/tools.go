@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"main/internal/config"
 	"main/internal/logline"
 	"main/internal/railway"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
+)
+
+const (
+	TMP_PATH = "./tmp"
 )
 
 func FlushLogsToFile(logs []*railway.EnvironmentLogsEnvironmentLogsLog, filename string) error {
@@ -19,40 +23,19 @@ func FlushLogsToFile(logs []*railway.EnvironmentLogsEnvironmentLogsLog, filename
 		return ErrNoLogsToFlush
 	}
 
-	logFile := &os.File{}
-	err := error(nil)
-	tempFile := &os.File{}
-
-	if MustParseBool(config.Railway.Resume) {
-		logFile, err = os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0644)
-		if err == nil {
-			// Create temp file to store existing content
-			tempFile, err = os.CreateTemp(filepath.Dir(filename), "railway-logs-*.tmp")
-			if err == nil {
-				// Copy existing content to temp file
-				logFile.Seek(0, 0)
-				io.Copy(tempFile, logFile)
-				// Reset to beginning for writing new logs
-				logFile.Seek(0, 0)
-				logFile.Truncate(0) // Clear the file
-			}
-		}
-	} else {
-		logFile, err = os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// Create directory path if it doesn't exist
+	dir := filepath.Dir(filename)
+	err := os.MkdirAll(dir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create directory path: %w", err)
 	}
 
+	logFile, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrFailedToCreateLogFile, err)
 	}
 
 	defer logFile.Close()
-
-	if tempFile != nil {
-		defer func() {
-			tempFile.Close()
-			os.Remove(tempFile.Name()) // Clean up temp file
-		}()
-	}
 
 	for _, logLine := range logs {
 		logLineJson, err := logline.ReconstructLogLine(logLine)
@@ -64,19 +47,48 @@ func FlushLogsToFile(logs []*railway.EnvironmentLogsEnvironmentLogsLog, filename
 		logFile.Write([]byte("\n"))
 	}
 
-	// When resuming, copy the old content back from temp file
-	if tempFile != nil {
-		tempFile.Seek(0, 0) // Reset temp file to beginning
-		io.Copy(logFile, tempFile)
-	}
-
 	return nil
 }
 
-func MustParseBool(value string) bool {
-	boolValue, _ := strconv.ParseBool(value)
+func CombineLogFiles(logFilesLocation string, outputFilename string) error {
+	files, err := filepath.Glob(filepath.Join(logFilesLocation, "*.jsonl"))
+	if err != nil {
+		return fmt.Errorf("failed to glob log files: %w", err)
+	}
 
-	return boolValue
+	slices.SortFunc(files, func(a, b string) int {
+		aUnix, _ := strconv.ParseInt(filepath.Base(a), 10, 64)
+		bUnix, _ := strconv.ParseInt(filepath.Base(b), 10, 64)
+		return int(aUnix - bUnix)
+	})
+
+	outputFile, err := os.OpenFile(outputFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrFailedToCreateOutputFile, err)
+	}
+
+	defer outputFile.Close()
+
+	for _, file := range files {
+		f, err := os.OpenFile(file, os.O_RDONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrFailedToReadFile, err)
+		}
+
+		defer f.Close()
+
+		if _, err := io.Copy(outputFile, f); err != nil {
+			return fmt.Errorf("%w: %w", ErrFailedToCopyTMPFile, err)
+		}
+
+		f.Close()
+
+		if err := os.Remove(file); err != nil {
+			return fmt.Errorf("%w: %w", ErrFailedToRemoveLogFile, err)
+		}
+	}
+
+	return nil
 }
 
 type LogLine struct {
@@ -84,7 +96,7 @@ type LogLine struct {
 }
 
 func ReadFirstLineTimestamp(filename string) (time.Time, error) {
-	file, err := os.Open(filename)
+	file, err := os.OpenFile(filename, os.O_RDONLY, 0644)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("%w: %w", ErrFailedToOpenLogFile, err)
 	}
@@ -106,4 +118,59 @@ func ReadFirstLineTimestamp(filename string) (time.Time, error) {
 	}
 
 	return time.Time{}, nil
+}
+
+func FinalLogWrite(filename string, useResume bool) error {
+	if useResume {
+		if err := os.Rename(filename, ("previous_" + filename)); err != nil {
+			return fmt.Errorf("%w: %w", ErrFailedToRenameLogFile, err)
+		}
+	}
+
+	if err := CombineLogFiles("./tmp", filename); err != nil {
+		return fmt.Errorf("%w: %w", ErrFailedToCombineLogs, err)
+	}
+
+	if useResume {
+		oldLogFile, err := os.OpenFile(("previous_" + filename), os.O_RDONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrFailedToOpenPreviousLogFile, err)
+		}
+
+		defer oldLogFile.Close()
+
+		newLogFile, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrFailedToOpenNewLogFile, err)
+		}
+
+		defer newLogFile.Close()
+
+		if _, err := io.Copy(newLogFile, oldLogFile); err != nil {
+			return fmt.Errorf("%w: %w", ErrFailedToCopyPreviousLogFile, err)
+		}
+
+		oldLogFile.Close()
+
+		if err := os.Remove(("previous_" + filename)); err != nil {
+			return fmt.Errorf("%w: %w", ErrFailedToRemovePreviousLogFile, err)
+		}
+	}
+
+	return nil
+}
+
+func ClearTempLogFiles() error {
+	files, err := filepath.Glob(filepath.Join(TMP_PATH, "*.jsonl"))
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrFailedToGlobLogFiles, err)
+	}
+
+	for _, file := range files {
+		if err := os.Remove(file); err != nil {
+			return fmt.Errorf("%w: %w", ErrFailedToRemoveLogFile, err)
+		}
+	}
+
+	return nil
 }
