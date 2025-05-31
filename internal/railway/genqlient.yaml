@@ -9,3 +9,4 @@ use_struct_references: true
 bindings:
   DateTime:
     type: time.Time
+    format: RFC3339Nano
