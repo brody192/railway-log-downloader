@@ -1,7 +1,7 @@
 package parser
 
 import (
-	"flag"
+	"bytes"
 	"fmt"
 	"os"
 	"reflect"
@@ -10,6 +10,7 @@ import (
 
 	"github.com/dustin/go-humanize/english"
 	"github.com/google/uuid"
+	"github.com/spf13/pflag"
 )
 
 // ParseFlags parses the flags and returns a map of the flags and their values
@@ -25,11 +26,31 @@ func ParseFlags(cfg any, t ...reflect.Type) map[string]*string {
 	for i := range t[0].NumField() {
 		field := t[0].Field(i)
 		if flagName := field.Tag.Get("flag"); flagName != "" {
-			flags[field.Name] = flag.String(flagName, "", field.Tag.Get("usage"))
+			flags[field.Name] = pflag.String(flagName, "", field.Tag.Get("usage"))
 		}
 	}
 
-	flag.Parse()
+	// Use ContinueOnError so Parse() returns the error instead of exiting
+	pflag.CommandLine.Init("railway_log_downloader", pflag.ContinueOnError)
+
+	// Capture pflag's error output so we can print error first, then usage
+	buf := bytes.Buffer{}
+	pflag.CommandLine.SetOutput(&buf)
+	err := pflag.CommandLine.Parse(os.Args[1:])
+	pflag.CommandLine.SetOutput(os.Stderr)
+
+	if err != nil {
+		// Don't print error/usage for --help flag
+		if err == pflag.ErrHelp {
+			pflag.Usage()
+			os.Exit(0)
+		}
+
+		fmt.Fprintf(os.Stderr, "Error: %s\n\n", err)
+		pflag.Usage()
+
+		os.Exit(1)
+	}
 
 	return flags
 }
@@ -77,11 +98,11 @@ func ParseConfig(cfg any) []error {
 
 		// collect errors only if field is required and no value is set and no default exists
 		requiredTag := field.Tag.Get("required")
-		requiredOneOfTag := field.Tag.Get("required_one_of")
-		requiredAllTag := field.Tag.Get("required_all")
+		requiredOneOfTag := field.Tag.Get("required_one_of_key")
+		requiredAllTag := field.Tag.Get("required_all_key")
 		isRequired, _ := strconv.ParseBool(requiredTag)
 
-		// Skip individual required validation if this field belongs to a required_one_of group
+		// Skip individual required validation if this field belongs to a required_one_of_key group
 		if requiredOneOfTag == "" && requiredAllTag == "" && fieldValue.String() == "" && isRequired {
 			flagName := field.Tag.Get("flag")
 			envVars := strings.Split(field.Tag.Get("env"), ",")
@@ -101,8 +122,8 @@ func ParseConfig(cfg any) []error {
 	for i := range t.NumField() {
 		field := t.Field(i)
 		fieldValue := v.Field(i)
-		requiredOneOfTag := field.Tag.Get("required_one_of")
-		requiredAllTag := field.Tag.Get("required_all")
+		requiredOneOfTag := field.Tag.Get("required_one_of_key")
+		requiredAllTag := field.Tag.Get("required_all_key")
 
 		if requiredOneOfTag != "" {
 			groupName := requiredOneOfTag
@@ -158,7 +179,7 @@ func ParseConfig(cfg any) []error {
 		}
 	}
 
-	// Validate required_all groups
+	// Validate required_all_key groups
 	for _, fields := range requiredAllGroups {
 		fieldsWithValues := 0
 		var fieldNames []string
@@ -233,7 +254,7 @@ func GetRequiredGroupValue(cfg any, groupName string) (flagName, value string) {
 	for i := range t.NumField() {
 		field := t.Field(i)
 		fieldValue := v.Field(i)
-		requiredOneOfTag := field.Tag.Get("required_one_of")
+		requiredOneOfTag := field.Tag.Get("required_one_of_key")
 
 		if requiredOneOfTag == groupName && fieldValue.String() != "" {
 			return field.Tag.Get("flag"), fieldValue.String()

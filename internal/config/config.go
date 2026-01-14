@@ -2,20 +2,22 @@ package config
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"os"
+	"reflect"
 	"strconv"
 
 	"main/internal/config/parser"
+
+	"github.com/spf13/pflag"
 )
 
 type ConfigString string
 
 type config struct {
-	DeploymentID  ConfigString `flag:"deployment" env:"RAILWAY_DEPLOYMENT_ID" usage:"deployment id to download logs for" validate:"uuid" required_one_of:"service_or_deployment"`
-	ServiceID     ConfigString `flag:"service" env:"RAILWAY_SERVICE_ID" usage:"service id to download logs for (required if environment is provided)" validate:"uuid" required_one_of:"service_or_deployment" required_all:"environment_and_service"`
-	EnvironmentID ConfigString `flag:"environment" env:"RAILWAY_ENVIRONMENT_ID" usage:"environment id to download logs for (required if service is provided)" validate:"uuid" required_all:"environment_and_service"`
+	DeploymentID  ConfigString `flag:"deployment" env:"RAILWAY_DEPLOYMENT_ID" usage:"deployment id to download logs for" validate:"uuid" required_one_of_key:"service_or_deployment"`
+	ServiceID     ConfigString `flag:"service" env:"RAILWAY_SERVICE_ID" usage:"service id to download logs for (required if environment is provided)" validate:"uuid" required_one_of_key:"service_or_deployment" required_all_key:"environment_and_service"`
+	EnvironmentID ConfigString `flag:"environment" env:"RAILWAY_ENVIRONMENT_ID" usage:"environment id to download logs for (required if service is provided)" validate:"uuid" required_all_key:"environment_and_service"`
 
 	Filter        ConfigString `flag:"filter" env:"RAILWAY_LOG_FILTER" usage:"filter to apply to logs"`
 	OverwriteFile ConfigString `flag:"overwrite" env:"RAILWAY_OVERWRITE_FILE" usage:"overwrite existing logs file" validate:"boolean"`
@@ -28,13 +30,40 @@ var Railway = &config{}
 
 func init() {
 	// add help flag purely for the usage message
-	flag.Bool("help", false, "Show help message")
+	pflag.Bool("help", false, "Show help message")
+
+	// Custom usage to print flags in struct definition order
+	pflag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage of railway_log_downloader:\n")
+
+		// Iterate over struct fields in order
+		t := reflect.TypeOf(Railway).Elem()
+		for i := range t.NumField() {
+			field := t.Field(i)
+			flagName := field.Tag.Get("flag")
+			if flagName == "" {
+				continue
+			}
+
+			typeName := "string"
+			if field.Tag.Get("validate") == "boolean" {
+				typeName = "boolean (true/false)"
+			}
+
+			fmt.Fprintf(os.Stderr, "  --%s %s\n", flagName, typeName)
+			fmt.Fprintf(os.Stderr, "        %s\n", field.Tag.Get("usage"))
+		}
+
+		// Add help flag at the end
+		fmt.Fprintf(os.Stderr, "  --help\n")
+		fmt.Fprintf(os.Stderr, "        Show help message\n")
+	}
 
 	// Only parse and print usage if -help is present in arguments
 	if checkForFlag("help") {
 		parser.ParseFlags(Railway)
 
-		flag.Usage()
+		pflag.Usage()
 
 		os.Exit(0)
 	}

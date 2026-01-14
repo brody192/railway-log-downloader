@@ -46,7 +46,7 @@ func main() {
 	}
 
 	// Check if the log file already exists to avoid overwriting
-	if _, err := os.Stat(logFileName); err == nil && config.Railway.OverwriteFile.Bool() && config.Railway.Resume.Bool() {
+	if _, err := os.Stat(logFileName); err == nil && !config.Railway.OverwriteFile.Bool() && !config.Railway.Resume.Bool() {
 		fmt.Printf("Log file %s already exists, delete or remove it to continue\n", logFileName)
 		fmt.Println("If you want to resume downloading logs from the oldest downloaded log, use the --resume flag")
 		fmt.Println("If you want to overwrite the existing log file, use the --overwrite flag")
